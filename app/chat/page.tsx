@@ -1,293 +1,456 @@
-// Simple Fred Chat Page - single-file React component
-// Usage: place fred.png in /public, ensure Tailwind CSS is set up, render <FredChat />
 "use client";
-import React, { useEffect, useRef, useState } from "react";
 
-export default function FredChat() {
-  const [online, setOnline] = useState(9);
-  const [messages, setMessages] = useState([
-    {
-      id: id(),
-      who: "FRED",
-      text: "ayo good boy, welcome to the group 🍟",
-      t: now(),
-    },
-    { id: id(), who: "ivy", text: "hii fred", t: now() },
-  ]);
-  const [input, setInput] = useState("");
-  const [typingFred, setTypingFred] = useState(false);
-  const listRef = useRef(null);
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+} from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 
-  // gentle presence wobble
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setOnline((n) =>
-        Math.max(
-          1,
-          n + (Math.random() > 0.6 ? 1 : Math.random() < 0.35 ? -1 : 0)
-        )
-      );
-    }, 2500);
-    return () => clearInterval(timer);
+// --- Types ---
+type Member = { id: string; name: string; avatar: string };
+type Message = {
+  id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  username?: string | null;
+  avatar?: string | null;
+};
+
+export default function Chat() {
+  const router = useRouter();
+  const supabase = useMemo(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    return createClient(url, key);
   }, []);
 
-  useEffect(() => {
-    // autoscroll
-    if (listRef.current) {
-      listRef.current.scrollTop = listRef.current.scrollHeight;
-    }
-  }, [messages, typingFred]);
+  const [user, setUser] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [members, setMembers] = useState<Member[]>([]);
 
-  function send() {
+  // New: messages state
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+
+  // Scroll container ref for auto-scroll
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // 1) Require auth
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase.auth.getUser();
+      if (error || !data.user) {
+        router.replace("/login?next=/chat");
+        return;
+      }
+      setUser(data.user);
+      setLoading(false);
+    })();
+  }, [router, supabase]);
+
+  // 2) Realtime Presence (auto-cleans up when tab closes or loses connection)
+  useEffect(() => {
+    if (!user) return;
+
+    const profile = getDisplay(user);
+
+    const channel = supabase.channel("presence:site", {
+      config: { presence: { key: user.id } },
+    });
+
+    channel
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        const list: Member[] = [];
+        for (const [id, metas] of Object.entries(state)) {
+          const last: any =
+            Array.isArray(metas) && metas.length
+              ? metas[metas.length - 1]
+              : null;
+          if (last) list.push({ id, name: last.name, avatar: last.avatar });
+        }
+        list.sort((a, b) => a.name.localeCompare(b.name));
+        setMembers(list);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({ name: profile.name, avatar: profile.avatar });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, user]);
+
+  // 3) Load initial messages + subscribe to inserts
+  useEffect(() => {
+    if (!user) return;
+
+    let isMounted = true;
+    const sub = supabase
+      .channel("room:global")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        (payload) => {
+          const msg = payload.new as Message;
+          if (isMounted) setMessages((prev) => [...prev, msg]);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          const msg = payload.new as Message;
+          if (isMounted)
+            setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m)));
+        }
+      )
+      .subscribe();
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, user_id, content, created_at, username, avatar")
+        .order("created_at", { ascending: true })
+        .limit(500);
+      if (!error && data) setMessages(data as Message[]);
+    })();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(sub);
+    };
+  }, [supabase, user]);
+
+  // 4) Send message
+  const send = useCallback(async () => {
     const text = input.trim();
-    if (!text) return;
-    const userMsg = { id: id(), who: "you", text, t: now() };
-    setMessages((m) => [...m, userMsg]);
+    if (!text || !user || sending) return;
+    setSending(true);
+
+    const profile = getDisplay(user);
+
+    // optimistic row (temporary id)
+    const tempId = `temp-${Date.now()}`;
+    const optimistic: Message = {
+      id: tempId,
+      user_id: user.id,
+      content: text,
+      created_at: new Date().toISOString(),
+      username: profile.name,
+      avatar: profile.avatar,
+    };
+    setMessages((prev) => [...prev, optimistic]);
     setInput("");
 
-    // bot typing + reply
-    setTypingFred(true);
-    const delay = 600 + Math.random() * 800;
-    setTimeout(() => {
-      setTypingFred(false);
-      const reply = fredReply(text);
-      setMessages((m) => [
-        ...m,
-        { id: id(), who: "FRED", text: reply, t: now(), fred: true },
-      ]);
-    }, delay);
+    const { error } = await supabase.from("messages").insert({
+      user_id: user.id,
+      content: text,
+      username: profile.name,
+      avatar: profile.avatar,
+    });
+
+    if (error) {
+      // rollback optimistic
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      // show a quick inline error bubble
+      const errMsg: Message = {
+        id: `err-${Date.now()}`,
+        user_id: "system",
+        content: `Failed to send: ${error.message}`,
+        created_at: new Date().toISOString(),
+        username: "System",
+        avatar: "/fred.png",
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    }
+
+    setSending(false);
+  }, [input, supabase, user, sending]);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight });
+  }, [messages.length]);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    router.replace("/login");
   }
 
-  return (
-    <div className="min-h-screen bg-white text-gray-900">
-      <header className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Avatar src="/fred.png" size={52} techHover />
-          <div>
-            <div className="font-extrabold text-lg">Fred Chat</div>
-            <div className="text-xs text-gray-500">
-              white • simple • a lil techy
-            </div>
-          </div>
-        </div>
-        <Presence count={online} />
-      </header>
+  if (loading) return <Skeleton />;
 
-      <main className="max-w-6xl mx-auto grid md:grid-cols-[1fr_280px] gap-6 px-6 pb-8">
-        {/* chat panel */}
-        <section className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm bg-white">
-          <div
-            ref={listRef}
-            className="h-[60vh] md:h-[68vh] p-4 overflow-auto bg-gray-50/50"
-          >
-            {messages.map((m) => (
-              <Msg key={m.id} who={m.who} text={m.text} t={m.t} fred={m.fred} />
-            ))}
-            {typingFred && <Typing who="FRED" />}
-          </div>
-          <div className="p-3 flex items-center gap-2">
-            <input
-              className="flex-1 px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-200"
-              placeholder="Write a message..."
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") send();
-              }}
+  const selfId = user?.id;
+
+  return (
+    <main className="min-h-screen bg-white text-gray-900 flex flex-col">
+      <header className="sticky top-0 z-10 bg-white/70 backdrop-blur border-b border-gray-100">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img
+              src="/fred.png"
+              alt="Fred"
+              width={28}
+              height={28}
+              className="rounded-full border border-gray-100"
             />
+            <h1 className="font-semibold">fred67 / chat</h1>
+            <PresencePill count={members.length} />
+          </div>
+          <div className="flex items-center gap-3">
+            <UserChip user={user} />
             <button
-              onClick={send}
-              className="px-4 py-2 rounded-xl bg-black text-white hover:scale-[1.02] transition-transform"
+              onClick={signOut}
+              className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50"
             >
-              Send
+              Sign out
             </button>
           </div>
-        </section>
+        </div>
+      </header>
 
-        {/* people / info */}
-        <aside className="space-y-4">
-          <Card>
-            <div className="text-xs font-medium text-gray-600">
-              Active people
-            </div>
-            <div className="mt-3 space-y-2">
-              {makeRoster(online)
-                .slice(0, 8)
-                .map((u) => (
-                  <div key={u.id} className="flex items-center gap-3">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${u.color}`}
-                    >
-                      {u.name}
-                    </div>
-                    <div className="text-sm flex-1">{u.handle}</div>
-                    <span className="w-2 h-2 rounded-full bg-green-400" />
-                  </div>
+      <section className="max-w-3xl mx-auto w-full px-4 flex-1 flex flex-col">
+        {/* Active members
+        <div className="mt-6">
+          <h2 className="text-sm font-medium text-gray-500">Active now</h2>
+          <div className="mt-3 flex flex-wrap gap-3">
+            {members.map((m) => (
+              <div
+                key={m.id}
+                className="flex items-center gap-2 border border-gray-100 rounded-full px-3 py-1.5"
+              >
+                <img
+                  src={m.avatar}
+                  alt={m.name}
+                  width={20}
+                  height={20}
+                  className="rounded-full"
+                />
+                <span className="text-sm">{m.name}</span>
+              </div>
+            ))}
+            {members.length === 0 && (
+              <p className="text-sm text-gray-400">(just you for now)</p>
+            )}
+          </div>
+        </div> */}
+
+        {/* Chat area */}
+        <div className="mt-6 border border-gray-100 rounded-2xl flex-1 flex flex-col overflow-hidden">
+          {/* messages list */}
+          <div
+            ref={listRef}
+            className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-white"
+          >
+            {renderGrouped(messages).map((chunk) => (
+              <div key={chunk.key} className="space-y-2">
+                <DayDivider label={chunk.label} />
+                {chunk.items.map((m) => (
+                  <MessageBubble key={m.id} me={m.user_id === selfId} msg={m} />
                 ))}
-            </div>
-          </Card>
+              </div>
+            ))}
+            {messages.length === 0 && (
+              <div className="h-64 grid place-items-center text-gray-400">
+                <p>Say hi to kick things off ✨</p>
+              </div>
+            )}
+          </div>
 
-          <Card>
-            <div className="text-xs text-gray-500">
-              Tip: Replace the fake reply logic with your backend
-              (WebSocket/Firebase/Supabase). Sanitize inputs, add server
-              moderation, and persist messages.
+          {/* composer */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              send();
+            }}
+            className="border-t border-gray-100 p-3 sm:p-4 bg-white"
+          >
+            <div className="flex items-end gap-2">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                placeholder="Type a message…"
+                rows={1}
+                className="flex-1 resize-none rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300 px-3 py-2 text-[15px]"
+              />
+              <button
+                type="submit"
+                disabled={!input.trim() || sending}
+                className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-gray-200 bg-gray-50 hover:bg-gray-100 disabled:opacity-50"
+                title={sending ? "Sending…" : "Send"}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-5 h-5"
+                >
+                  <path d="M3.4 20.4 22 12 3.4 3.6l.1 6.9L15 12 3.5 13.5l-.1 6.9Z" />
+                </svg>
+                Send
+              </button>
             </div>
-          </Card>
-        </aside>
-      </main>
-    </div>
+          </form>
+        </div>
+      </section>
+    </main>
   );
 }
 
-// --- components ---
-function Avatar({ src, size = 48, techHover = false }) {
-  const base =
-    "rounded-full border border-gray-100 bg-white shadow-sm object-contain";
-  const hover = techHover
-    ? "transition-transform duration-300 hover:scale-105 hover:rotate-1"
-    : "";
+function Skeleton() {
   return (
-    <div
-      className="relative inline-block"
-      style={{ width: size, height: size }}
-    >
-      <img
-        src={src}
-        width={size}
-        height={size}
-        alt="avatar"
-        className={`${base} ${hover} w-full h-full`}
-      />
-      {techHover && (
-        <span
-          className="pointer-events-none absolute inset-0 rounded-full opacity-0 hover:opacity-100 transition-opacity duration-300"
-          style={{
-            boxShadow:
-              "0 0 0 1px rgba(0,0,0,0.06), 0 10px 36px rgba(99,102,241,0.18)",
-          }}
-        />
-      )}
-    </div>
+    <main className="min-h-screen grid place-items-center text-gray-500">
+      <p>Loading…</p>
+    </main>
   );
 }
 
-function Presence({ count }) {
+function PresencePill({ count }: { count: number }) {
   return (
-    <div className="inline-flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-full px-3 py-1.5 text-sm">
-      <span className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse" />
+    <div className="ml-2 inline-flex items-center gap-2 bg-gray-50 border border-gray-100 rounded-full px-2.5 py-1 text-xs">
+      <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
       <span className="font-medium">{count} online</span>
     </div>
   );
 }
 
-function Card({ children }) {
+function UserChip({ user }: { user: any }) {
+  const d = getDisplay(user);
   return (
-    <div className="border border-gray-100 bg-white rounded-2xl shadow-sm p-4">
-      {children}
+    <div className="flex items-center gap-2">
+      <img
+        src={d.avatar}
+        alt={d.name}
+        width={24}
+        height={24}
+        className="rounded-full"
+      />
+      <span className="text-sm text-gray-700">{d.name}</span>
     </div>
   );
 }
 
-function Msg({ who, text, t, fred }) {
-  const isYou = who === "you";
+function MessageBubble({ me, msg }: { me: boolean; msg: Message }) {
+  const time = new Date(msg.created_at);
   return (
-    <div className={`flex ${isYou ? "justify-end" : ""} mb-3`}>
-      {!isYou && (
+    <div
+      className={`flex items-end gap-2 ${me ? "justify-end" : "justify-start"}`}
+    >
+      {!me && (
         <img
-          src={who === "FRED" ? "/fred.png" : "/fred.png"}
-          alt="a"
-          className="w-7 h-7 rounded-full border border-white mr-2"
+          src={msg.avatar || "/fred.png"}
+          width={28}
+          height={28}
+          alt={msg.username || "user"}
+          className="rounded-full border border-gray-100"
         />
       )}
       <div
-        className={`${
-          isYou ? "bg-black text-white" : "bg-white text-gray-900"
-        } px-3 py-2 rounded-2xl max-w-[75%] shadow-sm border ${
-          isYou ? "border-black/10" : "border-gray-100"
+        className={`max-w-[78%] rounded-2xl px-3 py-2 border ${
+          me
+            ? "bg-gray-900 text-white border-gray-900"
+            : "bg-white border-gray-200"
         }`}
       >
-        <div className="text-xs opacity-60 mb-1">
-          {who} • {t}
+        {!me && (
+          <div className="text-[11px] text-gray-500 mb-0.5">
+            {msg.username || "Anon"}
+          </div>
+        )}
+        <div className="whitespace-pre-wrap leading-relaxed text-[15px]">
+          {msg.content}
         </div>
-        <div className="text-sm leading-relaxed">{text}</div>
+        <div
+          className={`mt-1 text-[11px] ${
+            me ? "text-gray-300" : "text-gray-400"
+          }`}
+        >
+          {fmtTime(time)}
+        </div>
       </div>
+      {me && (
+        <img
+          src={msg.avatar || "/fred.png"}
+          width={28}
+          height={28}
+          alt={msg.username || "me"}
+          className="rounded-full border border-gray-100"
+        />
+      )}
     </div>
   );
 }
 
-function Typing({ who }) {
+function DayDivider({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 mb-2">
-      <img
-        src={who === "FRED" ? "/fred.png" : "/fred.png"}
-        alt="a"
-        className="w-6 h-6 rounded-full border border-white"
-      />
-      <div className="bg-white border border-gray-100 rounded-2xl px-3 py-2 shadow-sm text-sm">
-        <span className="inline-flex gap-1">
-          <Dot />
-          <Dot delay={120} />
-          <Dot delay={240} />
+    <div className="relative my-2">
+      <div className="absolute inset-0 flex items-center" aria-hidden="true">
+        <div className="w-full border-t border-gray-100"></div>
+      </div>
+      <div className="relative flex justify-center">
+        <span className="bg-white px-3 text-[11px] uppercase tracking-wide text-gray-400">
+          {label}
         </span>
       </div>
     </div>
   );
 }
 
-function Dot({ delay = 0 }) {
-  return (
-    <span
-      className="w-1.5 h-1.5 rounded-full bg-gray-400 inline-block animate-bounce"
-      style={{ animationDelay: `${delay}ms` }}
-    />
-  );
+function renderGrouped(list: Message[]) {
+  const buckets: Record<string, Message[]> = {};
+  for (const m of list) {
+    const key = new Date(m.created_at).toDateString();
+    (buckets[key] ||= []).push(m);
+  }
+  return Object.entries(buckets).map(([key, items]) => ({
+    key,
+    label: labelForDate(new Date(items[0].created_at)),
+    items,
+  }));
 }
 
-// --- helpers ---
-function id() {
-  return Math.random().toString(36).slice(2, 9);
-}
-function now() {
-  return new Date().toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
+function labelForDate(d: Date) {
+  const today = new Date();
+  const a = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  ).getTime();
+  const b = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const delta = (b - a) / 86400000;
+  if (delta === 0) return "Today";
+  if (delta === -1) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: today.getFullYear() === d.getFullYear() ? undefined : "numeric",
   });
 }
 
-function fredReply(userText) {
-  // super simple, non-harmful gen‑z-ish replies
-  const bank = [
-    "bet. that kinda slaps ngl",
-    "ok twin, noted. good boy move",
-    "no cap, it's giving main character",
-    "ur mom would agree tbh (playful)",
-    "big mood. drink water tho",
-    "lowkey ick but highkey valid",
-    "rizz levels detected: medium‑rare",
-    "aura check: cozy gremlin",
-  ];
-  const pick = bank[Math.floor(Math.random() * bank.length)];
-  // tiny echo for context
-  const clip = userText.slice(0, 60);
-  return `${pick} — “${clip}”`;
+function fmtTime(d: Date) {
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function makeRoster(n) {
-  const colors = [
-    "bg-blue-200",
-    "bg-pink-200",
-    "bg-yellow-200",
-    "bg-green-200",
-    "bg-purple-200",
-    "bg-red-200",
-    "bg-amber-200",
-    "bg-cyan-200",
-  ];
-  return Array.from({ length: Math.min(12, Math.max(1, n)) }).map((_, i) => ({
-    id: id(),
-    name: ("u" + (i + 1)).toUpperCase(),
-    handle: `user_${i + 1}`,
-    color: colors[i % colors.length],
-  }));
+function getDisplay(user: any) {
+  const md = user?.user_metadata || {};
+  const name =
+    md.user_name || md.name || md.full_name || md.preferred_username || "you";
+  const avatar = md.avatar_url || md.picture || "/fred.png";
+  return { name, avatar };
 }
