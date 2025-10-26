@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@letta-ai/letta-client": "^0.0.68665",
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/ssr": "github:supabase/ssr",
     "@supabase/supabase-js": "^2.76.1",

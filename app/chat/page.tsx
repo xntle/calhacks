@@ -56,6 +56,11 @@ export default function Chat() {
       }
       setUser(data.user);
       setLoading(false);
+      // (optional) if you want a login-time hook (e.g., attach memory), do it here using data.user
+      await fetch("/api/add_context", {
+        method: "POST",
+        body: JSON.stringify({ email: data.user.email }),
+      });
     })();
   }, [router, supabase]);
 
@@ -100,8 +105,9 @@ export default function Chat() {
         (payload) => {
           const msg = payload.new as Message;
           if (isMounted) setMessages((prev) => [...prev, msg]);
-          if (msg.actor === "bot" && msg.bot_key === "fred")
+          if (msg.actor === "bot" && msg.bot_key === "fred") {
             setAwaitingFred(false);
+          }
         }
       )
       .on(
@@ -132,7 +138,7 @@ export default function Chat() {
     };
   }, [supabase, user]);
 
-  // 4) Send message (always pings FRED after human message)
+  // 4) Send message → decision gatekeeper (will call /api/fred if needed)
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || !user || sending) return;
@@ -164,11 +170,11 @@ export default function Chat() {
       return;
     }
 
-    // Always summon FRED (server route has guards)
+    // Ask the decision route to judge if FRED should speak now
     setAwaitingFred(true);
     try {
-      fetch("/api/fred", { method: "POST" });
-    } catch (_) {
+      fetch("/api/decision", { method: "POST" });
+    } catch {
       setAwaitingFred(false);
     }
 
@@ -201,7 +207,7 @@ export default function Chat() {
   const selfId = user?.id;
 
   return (
-    <main className="min-h-screen bg-white text-gray-900 flex flex-col">
+    <main className="min-h-screen bg-white text-gray-900 flex flex-col mb-18">
       <header className="sticky top-0 z-20 bg-white/70 backdrop-blur border-b border-gray-100">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -238,7 +244,7 @@ export default function Chat() {
           {/* Scrollable messages panel */}
           <div
             ref={listRef}
-            className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-white scroll-smooth"
+            className="flex-1 overflow-y-auto p-4 sm:p-6 pb-4 space-y-4 bg-white scroll-smooth"
           >
             {renderGrouped(messages).map((chunk) => (
               <div key={chunk.key} className="space-y-2">
@@ -254,51 +260,53 @@ export default function Chat() {
               </div>
             )}
           </div>
-
-          {/* Sticky input bar (always visible) */}
+          {/* Fixed input bar pinned to the viewport */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               send();
             }}
-            className="sticky bottom-0 border-t border-gray-100 p-3 sm:p-4 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60"
+            className="fixed bottom-0 left-0 right-0 z-40 border-t border-gray-100 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/60"
           >
-            <div className="flex items-end gap-2">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  autoResizeTextarea();
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                placeholder="Type a message…"
-                rows={1}
-                className="flex-1 resize-none rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300 px-3 py-2 text-[15px] max-h-48 leading-[1.35]"
-              />
-              <button
-                type="submit"
-                disabled={!input.trim() || sending}
-                className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-gray-200 bg-gray-50 hover:bg-gray-100 disabled:opacity-50"
-                title={sending ? "Sending…" : "Send"}
-              >
-                <span className="inline-flex items-center gap-2">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    className="w-5 h-5"
-                  >
-                    <path d="M3.4 20.4 22 12 3.4 3.6l.1 6.9L15 12 3.5 13.5l-.1 6.9Z" />
-                  </svg>
-                  Send
-                </span>
-              </button>
+            <div className="max-w-3xl mx-auto px-4 py-3 sm:py-4">
+              <div className="flex items-end gap-2">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    autoResizeTextarea();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                  placeholder="Type a message…"
+                  rows={1}
+                  className="flex-1 resize-none rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-300 px-3 py-2 text-[15px] max-h-48 leading-[1.35] bg-white"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() || sending}
+                  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 border border-gray-200 bg-gray-50 hover:bg-gray-100 disabled:opacity-50"
+                  title={sending ? "Sending…" : "Send"}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    {/* send icon */}
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className="w-5 h-5"
+                    >
+                      <path d="M3.4 20.4 22 12 3.4 3.6l.1 6.9L15 12 3.5 13.5l-.1 6.9Z" />
+                    </svg>
+                    Send
+                  </span>
+                </button>
+              </div>
             </div>
           </form>
         </div>

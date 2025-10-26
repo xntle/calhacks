@@ -55,6 +55,7 @@ export default function FredLanding() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
+      // In your component: replace the logged-in branch inside onJoin()
       if (!user) {
         await supabase.auth.signInWithOAuth({
           provider: "google",
@@ -62,6 +63,14 @@ export default function FredLanding() {
         });
         return;
       }
+      console.log("logged");
+      console.log("calling letta-fred");
+      // user is logged in → create the Letta block, then navigate
+      await fetch("/api/add_context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, email: user.email }),
+      }).catch(() => {}); // non-blocking; still go to chat
       router.push("/chat");
     } catch (e) {
       console.error(e);

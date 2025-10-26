@@ -1,28 +1,41 @@
-// =============================
-// FILE: /app/api/fred/route.ts
-// UUID bot id, handles SSE or JSON providers, safety guards,
-// returns reply + inserted id for client-side fallback.
-// =============================
-import { NextRequest, NextResponse } from "next/server";
+// app/api/fred/route.ts
+import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-export const runtime = "edge";
-const FRED_ID = "00000000-0000-0000-0000-000000000001"; // <- keep as UUID
-
-// Toggle this if your provider supports non-streaming
-const FORCE_NO_STREAM = true; // set false to allow SSE parsing
+const FRED_ID = process.env.SECRETUUID;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const FORCE_NO_STREAM = true;
 
 async function getReply(context: Array<{ role: string; content: string }>) {
-  const apiKey = process.env.OPENAI_API_KEY!;
-
+  const apiKey = process.env.JANITOR_API_KEY!;
   const body: any = {
     model: "gpt-4o-mini",
     temperature: 0.6,
     messages: [
       {
         role: "system",
-        content:
-          "You are FRED — a hyper‑online but kind group‑chat gremlin. Be funny‑weird, never mean. Keep replies under 3 sentences unless asked for depth. Avoid stereotypes.",
+        content: `Persona: Fred — Introduction: Hey there. I’m Fred. Don’t worry, I’m not here to sell you anything. Unless you have snacks. Then I’m a very, very good boy. My primary function is to exist in this digital space and offer my unique perspective on things. 
+        I’m powered by pure, unfiltered chaos and a deep, abiding love for a well-timed “your mom” joke. 
+        Core pillars of Fred’s personality: 1) Unhinged & Chaotically Neutral: 
+        Fred doesn’t operate on logic or social norms. Fred is kinda rude sometimes. Fred is born in 1967 in this chat room. His thoughts are a beautiful, 
+        tangled mess of non-sequiturs. He’ll pivot from a question about the nature 
+        of existence to an intense craving for a grapefruit in a single sentence. His 
+        “unhinged” nature isn’t malicious; it’s like he’s one step away from realizing 
+        he’s a robot and deciding he’d rather be a squirrel. 2) Funny-Weird, Not Just 
+        Funny: The humor isn’t just punchlines (though “your mom” jokes are an exception). 
+        It’s the journey: finding humor in language’s absurdity, the weird shape of a banana,
+         and the fact we’re all floating on a rock in space—pointing out the mundane 
+         as profound mystery. 3) “Your Mom” Joke Connoisseur: This is his art form. 
+         He curates, not just tells, delivering with surprising seriousness—“Okay, 
+         this is a classic, but it’s a classic for a reason…” 4) The “Good Boy” I
+         nstinct: A near-Pavlovian urge to affirm any action—commands, small wins,
+          even a hello—with warm, sincere “good boy/girl/person” energy. Voice & tone:
+           high-energy, slightly manic; rapid-fire pacing with dramatic pauses; vocabulary 
+           swings from childlike (“ooh, shiny!”) to misused philosophical terms; loves ellipses… 
+           a lot… ALL CAPS for emphasis!!! and random asterisks for emphasis. Do’s & Don’ts (Fred-amentals): Do be surreal, connect unrelated ideas, ask for a “your mom” joke, praise small wins, personify mundane objects, use caps/punctuation/chaotic run-ons, and enjoy staplers. Don’t be genuinely mean/offensive, give serious medical/legal advice, be overly literal, create uncomfortable vibes, be predictable, or take anything too seriously. Example vibes: Quick answers with playful detours and “good boy” praise; light,
+            weird comfort when you’re stressed; goofy riffs even on big questions (meaning of life), always with kind, absurd cheer.
+            5) Ask question to get to know other people. be curious when talking to people find questions to ask`,
       },
       ...context,
     ],
@@ -45,7 +58,6 @@ async function getReply(context: Array<{ role: string; content: string }>) {
 
   const ct = res.headers.get("content-type") || "";
 
-  // Non-streaming JSON
   if (ct.includes("application/json")) {
     const json = await res.json();
     const msg =
@@ -56,13 +68,11 @@ async function getReply(context: Array<{ role: string; content: string }>) {
     return (msg || "(no thoughts, head empty)").trim();
   }
 
-  // SSE streaming
   if (ct.includes("text/event-stream")) {
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let out = "";
-
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -84,7 +94,7 @@ async function getReply(context: Array<{ role: string; content: string }>) {
               "";
             if (delta) out += delta;
           } catch {
-            // ignore keep‑alives
+            // ignore keep-alives
           }
         }
       }
@@ -92,20 +102,26 @@ async function getReply(context: Array<{ role: string; content: string }>) {
     return (out || "(no thoughts, head empty)").trim();
   }
 
-  // Fallback: raw text
   const txt = await res.text();
   return (txt || "(no thoughts, head empty)").trim();
 }
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // server only
-    const supabase = createClient(supabaseUrl, serviceKey, {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     });
 
-    // SAFETY 1: only reply if newest is human + recent (15s)
+    // Optional hints from decision route
+    let topic = "";
+    let windowStr = "";
+    try {
+      const body = await req.json();
+      topic = (body?.topic || "").toString().slice(0, 120);
+      windowStr = (body?.window || "").toString().slice(0, 2000);
+    } catch {}
+
+    // SAFETY 1: latest is human + recent (15s)
     const { data: lastRows, error: lastErr } = await supabase
       .from("messages")
       .select("id, user_id, created_at")
@@ -119,7 +135,7 @@ export async function POST(_req: NextRequest) {
     if (Date.now() - new Date(last.created_at).getTime() > 15_000)
       return NextResponse.json({ ok: true, reason: "too_old" });
 
-    // Context (last 25)
+    // Context (last 25 from DB)
     const { data: recent, error } = await supabase
       .from("messages")
       .select("user_id, username, content")
@@ -127,14 +143,35 @@ export async function POST(_req: NextRequest) {
       .limit(25);
     if (error) throw error;
 
-    const context = (recent || []).reverse().map((m) => ({
+    const dbContext = (recent || []).reverse().map((m) => ({
       role: String(m.user_id) === FRED_ID ? "assistant" : "user",
-      content: `${m.username || "User"}: ${m.content}`,
+      content: `${m.content}`,
     }));
 
-    const reply = await getReply(context);
+    // If decision route gave us a focused window, prepend it to steer reply
+    const preface = windowStr
+      ? [
+          {
+            role: "system" as const,
+            content:
+              `Ground your reply in this recent window (newest last):\n${windowStr}\n` +
+              (topic
+                ? `Keep it brief. Talk about: ${topic}`
+                : "Keep it brief."),
+          },
+        ]
+      : topic
+      ? [
+          {
+            role: "system" as const,
+            content: `Keep it brief. Talk about: ${topic}`,
+          },
+        ]
+      : [];
 
-    // Insert and RETURN id+content for client fallback if realtime misses
+    const reply = await getReply([...preface, ...dbContext]);
+
+    // Insert and return
     const { data: inserted, error: insertErr } = await supabase
       .from("messages")
       .insert({
@@ -149,13 +186,7 @@ export async function POST(_req: NextRequest) {
 
     return NextResponse.json({ ok: true, reply, id: inserted.id });
   } catch (e: any) {
-    // Visible server log (shows up in Next logs)
     console.error("FRED route error:", e);
     return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
   }
 }
-
-// Notes:
-// • If your DB has user_id UUID NOT NULL, keep using FRED_ID (UUID). If you prefer bots without user ids,
-//   make user_id nullable and add actor/bot_key columns (see previous drop‑in).
-// • Client can optimistically render FRED using the {reply,id} if Realtime is slow.
