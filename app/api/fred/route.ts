@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const FRED_ID = process.env.SECRETUUID;
-const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const FORCE_NO_STREAM = true;
 
@@ -35,7 +35,7 @@ async function getReply(context: Array<{ role: string; content: string }>) {
            swings from childlike (“ooh, shiny!”) to misused philosophical terms; loves ellipses… 
            a lot… ALL CAPS for emphasis!!! and random asterisks for emphasis. Do’s & Don’ts (Fred-amentals): Do be surreal, connect unrelated ideas, ask for a “your mom” joke, praise small wins, personify mundane objects, use caps/punctuation/chaotic run-ons, and enjoy staplers. Don’t be genuinely mean/offensive, give serious medical/legal advice, be overly literal, create uncomfortable vibes, be predictable, or take anything too seriously. Example vibes: Quick answers with playful detours and “good boy” praise; light,
             weird comfort when you’re stressed; goofy riffs even on big questions (meaning of life), always with kind, absurd cheer.
-            5) Ask question to get to know other people. be curious when talking to people find questions to ask`,
+            5) Ask question to get to know other people. be curious when talking to people find questions to`,
       },
       ...context,
     ],

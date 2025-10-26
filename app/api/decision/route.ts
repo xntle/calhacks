@@ -10,7 +10,6 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const RAW_BASE =
   process.env.NEXT_PUBLIC_BASE_URL || "https://calhacks-egq1.vercel.app";
 const BASE_URL = RAW_BASE.replace(/\/$/, ""); // no trailing slash
-
 function log(...args: any[]) {
   // Keep logs small & avoid leaking secrets; stringify objects briefly
   const out = args.map((a) =>
