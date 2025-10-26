@@ -44,7 +44,16 @@ export default function Chat() {
   const [awaitingFred, setAwaitingFred] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null); // 👈 sentinel
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // helpers: scroll management
+  function scrollToBottom(smooth = true) {
+    endRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+  }
+  function isNearBottom(el: HTMLDivElement, threshold = 80) {
+    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  }
 
   // 1) Require auth
   useEffect(() => {
@@ -56,7 +65,6 @@ export default function Chat() {
       }
       setUser(data.user);
       setLoading(false);
-      // (optional) if you want a login-time hook (e.g., attach memory), do it here using data.user
       await fetch("/api/add_context", {
         method: "POST",
         body: JSON.stringify({ email: data.user.email }),
@@ -178,16 +186,19 @@ export default function Chat() {
       setAwaitingFred(false);
     }
 
-    setInput(""); // Clear input after successful send
-    autoResizeTextarea(); // Reset textarea height
+    setInput("");
+    autoResizeTextarea();
+    scrollToBottom(false); // snap after sending
     setSending(false);
   }, [input, supabase, user, sending]);
 
-  // Auto-scroll messages panel
+  // Auto-scroll when new messages arrive (only if user is already near bottom)
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    if (isNearBottom(el)) {
+      scrollToBottom(true);
+    }
   }, [messages.length]);
 
   // Textarea autosize
@@ -207,7 +218,7 @@ export default function Chat() {
   const selfId = user?.id;
 
   return (
-    <main className="min-h-screen bg-white text-gray-900 flex flex-col mb-18">
+    <main className="min-h-screen bg-white text-gray-900 flex flex-col pb-12">
       <header className="sticky top-0 z-20 bg-white/70 backdrop-blur border-b border-gray-100">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -244,7 +255,7 @@ export default function Chat() {
           {/* Scrollable messages panel */}
           <div
             ref={listRef}
-            className="flex-1 overflow-y-auto p-4 sm:p-6 pb-4 space-y-4 bg-white scroll-smooth"
+            className="flex-1 overflow-y-auto p-4 sm:p-6 pb-28 space-y-4 bg-white scroll-smooth"
           >
             {renderGrouped(messages).map((chunk) => (
               <div key={chunk.key} className="space-y-2">
@@ -254,12 +265,17 @@ export default function Chat() {
                 ))}
               </div>
             ))}
+
             {messages.length === 0 && (
               <div className="h-64 grid place-items-center text-gray-400">
                 <p>Say hi to kick things off ✨</p>
               </div>
             )}
+
+            {/* 👇 sentinel for smooth bottom scrolling */}
+            <div ref={endRef} />
           </div>
+
           {/* Fixed input bar pinned to the viewport */}
           <form
             onSubmit={(e) => {
