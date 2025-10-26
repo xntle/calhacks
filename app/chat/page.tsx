@@ -208,7 +208,7 @@ export default function Chat() {
 
   async function signOut() {
     await supabase.auth.signOut();
-    router.replace("/login");
+    router.replace("/");
   }
 
   if (loading) return <Skeleton />;
