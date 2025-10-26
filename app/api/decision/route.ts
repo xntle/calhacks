@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { LettaClient } from "@letta-ai/letta-client";
 import { createClient } from "@supabase/supabase-js";
+import { Rock_3D } from "next/font/google";
 
 const AGENT_ID = process.env.LETTA_AGENT_ID || "";
 const LETTA_API_KEY = process.env.LETTA_API_KEY!;
@@ -34,9 +35,14 @@ const pickAssistant = (mm: MsgUnion[]) =>
     ?.content?.trim() || "";
 
 const safeJSON = (s?: string) => {
+  let sanitize = s?.replaceAll("```", "");
+  sanitize = sanitize?.replaceAll("json", "");
+  sanitize = sanitize?.replaceAll("```", "");
+  console.log(sanitize);
   try {
-    return s ? JSON.parse(s) : null;
-  } catch {
+    return sanitize ? JSON.parse(sanitize) : null;
+  } catch (e) {
+    console.log("invalid", e);
     return null;
   }
 };
@@ -166,7 +172,9 @@ Decide if you should speak now based on the window above.
     // 5) Parse JSON
     const raw = pickAssistant(resp.messages as any[]);
     const parsed = safeJSON(raw) || {};
-    const speak = !parsed.speak;
+    log(rid, "parsed", parsed);
+    log(rid, "raw", raw);
+    const speak = !!parsed.speak;
     const topic =
       typeof parsed.topic === "string" ? parsed.topic.slice(0, 120) : "";
     const memoryNote =
