@@ -7,7 +7,8 @@ const AGENT_ID = process.env.LETTA_AGENT_ID || "";
 const LETTA_API_KEY = process.env.LETTA_API_KEY!;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"; // optional; if unset we’ll use relative /api/fred
+const BASE_URL =
+  process.env.NEXT_PUBLIC_BASE_URL || "https://calhacks-egq1.vercel.app/"; // optional; if unset we’ll use relative /api/fred
 
 function log(...args: any[]) {
   // Keep logs small & avoid leaking secrets; stringify objects briefly
