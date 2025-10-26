@@ -59,7 +59,7 @@ export default function FredLanding() {
       if (!user) {
         await supabase.auth.signInWithOAuth({
           provider: "google",
-          options: { redirectTo: `${window.location.origin}/chat` },
+          options: { redirectTo: `${window.location.origin}/auth/callback` },
         });
         return;
       }
