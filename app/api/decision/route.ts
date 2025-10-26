@@ -7,8 +7,9 @@ const AGENT_ID = process.env.LETTA_AGENT_ID || "";
 const LETTA_API_KEY = process.env.LETTA_API_KEY!;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const BASE_URL =
-  process.env.NEXT_PUBLIC_BASE_URL || "https://calhacks-egq1.vercel.app"; // optional; if unset we’ll use relative /api/fred
+const RAW_BASE =
+  process.env.NEXT_PUBLIC_BASE_URL || "https://calhacks-egq1.vercel.app";
+const BASE_URL = RAW_BASE.replace(/\/$/, ""); // no trailing slash
 
 function log(...args: any[]) {
   // Keep logs small & avoid leaking secrets; stringify objects briefly
@@ -97,7 +98,7 @@ async function upsertGroupDynamicBlock(
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const rid = crypto.randomUUID(); // Edge-safe
 
   try {
@@ -184,8 +185,7 @@ Decide if you should speak now based on the window above.
     // 7) Speak? Call /api/fred with richer context so it can craft the reply
     const origin = (() => {
       try {
-        // @ts-ignore - req is available in Edge route signature (POST(req))
-        const u = new URL(req.url);
+        const u = new URL(req.url); // now req exists
         return u.origin;
       } catch {
         return process.env.NEXT_PUBLIC_BASE_URL || "";

@@ -9,8 +9,8 @@ import Link from "next/link";
 export default function FredLanding() {
   const router = useRouter();
   const supabase = useMemo(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const url = process.env.SUPABASE_URL!;
+    const key = process.env.SUPABASE_ANON_KEY!;
     return createClient(url, key);
   }, []);
   const [presence, setPresence] = useState(8);
