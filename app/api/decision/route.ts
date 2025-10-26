@@ -3,8 +3,7 @@ import { NextResponse } from "next/server";
 import { LettaClient } from "@letta-ai/letta-client";
 import { createClient } from "@supabase/supabase-js";
 
-const AGENT_ID =
-  process.env.LETTA_AGENT_ID || "agent-b6bb0aa5-648a-49c2-a5d3-8a0db7b76b7f";
+const AGENT_ID = process.env.LETTA_AGENT_ID || "";
 const LETTA_API_KEY = process.env.LETTA_API_KEY!;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
